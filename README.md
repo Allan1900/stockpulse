@@ -227,8 +227,7 @@ src/ashare/
   dashboard/  Streamlit 启动器
   config.py   配置（YAML + 环境变量）
   paths.py    路径解析（SP_DATA_DIR / SP_DASHBOARD_DIR）
-engine/       分析引擎：指标、回测、因子、宏观、告警、研报、每日更新
-dashboard/    Streamlit 面板 + engine/
+dashboard/    Streamlit 面板（18 页）+ engine/ 分析引擎（指标/回测/因子/宏观/告警/研报/每日更新）
 src/stockpulse/  0.x 时代的 SDK/CLI（保留兼容）
 docs/         文档
 ```

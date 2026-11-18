@@ -1,7 +1,7 @@
 ---
 name: ashare-stock-query
 description: "Use when the user asks about A-share (Chinese stock market) data — daily quotes, money flow, financials, industry rankings, north-bound capital, top list, or macro indicators."
-version: 1.0.0
+version: 2.0.0
 author: ALLAN
 license: MIT
 metadata:
@@ -16,7 +16,7 @@ metadata:
 
 ## 配置
 
-确保 `stockpulse` 包已安装，且 PostgreSQL 数据库可用：
+确保 StockPulse v2 已安装（`pip install -e ".[api,mcp]"`），且 PostgreSQL 数据库可用：
 
 ```bash
 pip install stockpulse
