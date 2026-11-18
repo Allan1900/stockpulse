@@ -4,30 +4,49 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stockpulse"
-version = "0.1.0"
-description = "让 AI Agent 做 A 股分析 —— 不只是查数据。北向资金/龙虎榜/宏观/行情/财务，OpenAI 兼容 API + MCP 协议 + CLI。"
+version = "2.0.0"
+description = "A 股数据与分析平台：REST API + MCP Server + 分析引擎 + 自托管面板。给 AI Agent 一个可直接调用的市场脉搏。"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "ALLAN", email = "hermes@nousresearch.com"},
+    {name = "Allan", email = "Allan1900@users.noreply.github.com"},
+]
+keywords = ["a-share", "stock", "mcp", "agent", "quant", "fastapi"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Office/Business :: Financial :: Investment",
 ]
 
 dependencies = [
     "click>=8.0",
     "pandas>=2.0",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "requests>=2.28",
     "sqlalchemy>=2.0",
-    "psycopg2-binary>=2.9",
     "fastapi>=0.100",
     "uvicorn>=0.23",
-    "pyyaml>=6.0",
+    "psycopg2-binary>=2.9",
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+dashboard = ["streamlit>=1.30", "plotly>=5.15"]
+reports = ["markdown>=3.4", "weasyprint>=60"]
+data = ["tushare>=1.0.0"]
 dev = ["pytest>=7.0"]
+all = ["stockpulse[mcp,dashboard,reports,data]"]
 
 [project.scripts]
 stockpulse = "stockpulse.cli:cli"
+ashare = "ashare.cli:cli"
+stockpulse-server = "ashare.api.server:run_server"
+stockpulse-mcp = "ashare.api.v2.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"ashare.api" = ["static/*"]

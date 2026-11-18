@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<title>StockPulse 市场脉搏</title>
+<link rel="manifest" href="/app/manifest.webmanifest">
+<link rel="icon" href="/app/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/app/icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2333; --line:#2d3443;
+  --text:#e6edf3; --dim:#8b949e; --cyan:#00d4aa; --red:#f85149; --green:#3fb950;
+  --amber:#d29922;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  padding-bottom:64px;max-width:640px;margin:0 auto}
+a{color:var(--cyan);text-decoration:none}
+header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,#0d1117ee,#0d1117cc);
+  backdrop-filter:blur(8px);padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+header .brand{display:flex;align-items:center;gap:8px}
+header .logo{width:26px;height:26px;border-radius:7px}
+header h1{font-size:17px;font-weight:700;letter-spacing:.5px}
+header .pulse{color:var(--cyan)}
+header .sub{font-size:11px;color:var(--dim);margin-top:2px}
+nav{position:fixed;bottom:0;left:0;right:0;max-width:640px;margin:0 auto;z-index:10;
+  display:flex;background:#10151c;border-top:1px solid var(--line)}
+nav button{flex:1;padding:10px 0 12px;background:none;border:none;color:var(--dim);
+  font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
+nav button.active{color:var(--cyan)}
+nav button .ic{font-size:18px;line-height:1}
+main{padding:14px 14px 8px}
+section{display:none}
+section.active{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.card h3{font-size:13px;color:var(--dim);margin-bottom:8px;font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.up{color:var(--red)} .down{color:var(--green)} .flat{color:var(--dim)}
+.big{font-size:22px;font-weight:700}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;margin-left:6px;vertical-align:middle}
+.tag.up{background:#f851491c;color:var(--red)} .tag.down{background:#3fb9501c;color:var(--green)} .tag.flat{background:#8b949e1c;color:var(--dim)}
+input[type=search]{width:100%;padding:11px 14px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel);color:var(--text);font-size:15px;outline:none}
+input[type=search]:focus{border-color:var(--cyan)}
+.btn{display:inline-block;padding:8px 16px;border-radius:8px;border:1px solid var(--cyan);
+  color:var(--cyan);background:none;font-size:13px;cursor:pointer}
+.btn.primary{background:var(--cyan);color:#04120e;border:none;font-weight:700}
+.btn:disabled{opacity:.4;cursor:default}
+canvas{width:100%;height:140px;display:block}
+.row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #232a36}
+.row:last-child{border-bottom:none}
+.row .l{font-size:13px}
+.row .r{font-size:13px;text-align:right}
+.chip{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:5px 9px;margin:3px 4px 3px 0;font-size:11px;color:var(--dim)}
+.chip b{color:var(--text)}
+.banner{background:#3fb9501c;border:1px solid #3fb95055;color:#7ee787;border-radius:10px;
+  padding:9px 12px;font-size:12px;margin-bottom:12px;display:none}
+.banner.err{background:#f851491c;border-color:#f8514955;color:#ffa198}
+#loader{position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);z-index:99;
+  width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--cyan);
+  border-radius:50%;animation:spin .8s linear infinite;display:none}
+@keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+.warn{color:var(--amber);font-size:12px}
+</style>
+</head>
+<body>
+<div id="loader"></div>
+<header>
+  <div class="brand">
+    <img class="logo" src="/app/icons/icon-192.png" alt="">
+    <h1>StockPulse <span class="pulse">市场脉搏</span></h1>
+  </div>
+  <div class="sub" id="dateline">数据日期 —</div>
+</header>
+<main>
+  <div id="offline" class="banner err">⚠ 离线模式 · 展示缓存数据（请联网获取最新行情）</div>
+  <div id="errbox" class="banner err"></div>
+
+  <section id="tab-market" class="active">
+    <div class="grid2" id="indexCards"></div>
+    <div class="card">
+      <h3>资金 · 全市场（最新交易日）</h3>
+      <div id="moneyflowBox" class="row"><span class="l">加载中…</span></div>
+    </div>
+  </section>
+
+  <section id="tab-stock">
+    <div class="card">
+      <input type="search" id="q" placeholder="搜索 代码/名称，如 600519 或 茅台" autocomplete="off">
+      <div id="searchResults"></div>
+    </div>
+    <div id="stockDetail"></div>
+  </section>
+
+  <section id="tab-portfolio">
+    <div id="portfolioList"></div>
+    <div id="portfolioDetail"></div>
+  </section>
+
+  <section id="tab-settings">
+    <div class="card">
+      <h3>终端信息</h3>
+      <div class="row"><span class="l">服务版本</span><span class="r" id="ver">—</span></div>
+      <div class="row"><span class="l">数据源</span><span class="r" id="src">—</span></div>
+      <div class="row"><span class="l">完整性</span><span class="r" id="comp">—</span></div>
+      <div class="row"><span class="l">API 状态</span><span class="r" id="apiStatus">检测中…</span></div>
+      <div class="row"><span class="l">PWA 安装</span><span class="r"><button class="btn" id="installBtn" disabled>未支持</button></span></div>
+    </div>
+    <div class="card">
+      <h3>快捷入口</h3>
+      <p style="font-size:12px;color:var(--dim);line-height:1.8">
+        <a href="/docs" target="_blank">API 文档</a> ·
+        <a href="http://localhost:8501" target="_blank">Dashboard 看板</a><br>
+        本终端直连 StockPulse API（/sp-api/v2），支持离线缓存。
+      </p>
+    </div>
+  </section>
+</main>
+<nav>
+  <button data-tab="market" class="active"><span class="ic">📊</span>大盘</button>
+  <button data-tab="stock"><span class="ic">🔍</span>个股</button>
+  <button data-tab="portfolio"><span class="ic">💼</span>组合</button>
+  <button data-tab="settings"><span class="ic">⚙️</span>设置</button>
+</nav>
+
+<script>
+const API = '/sp-api/v2';
+const UP='up', DOWN='down', FLAT='flat';
+const INDEXES=[['000001.SH','上证指数'],['399001.SZ','深证成指'],['399006.SZ','创业板指'],['000300.SH','沪深300']];
+let installPrompt=null;
+
+async function api(path){
+  const r=await fetch(API+path,{headers:{Accept:'application/json'}});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const j=await r.json();
+  if(j.code!==0) throw new Error((j.message||'业务错误')+' '+(j.error||''));
+  return j;
+}
+function cls(p){ if(p>0.0001) return UP; if(p<-0.0001) return DOWN; return FLAT; }
+function fmt(v,d=2){ if(v==null||isNaN(v)) return '—'; return Number(v).toFixed(d); }
+function el(tag,cls,html){ const e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; }
+function recordsOf(j){ const d=j&&j.data; return Array.isArray(d)?d:(d&&d.records)||[]; }
+function err(msg){ const b=document.getElementById('errbox'); b.style.display='block'; b.textContent='⚠ '+msg; }
+function clearErr(){ document.getElementById('errbox').style.display='none'; }
+
+async function boot(){
+  navigator.serviceWorker && navigator.serviceWorker.register('/app/sw.js').catch(()=>{});
+  window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); installPrompt=e;
+    const b=document.getElementById('installBtn'); b.disabled=false; b.textContent='安装到桌面'; });
+  document.getElementById('installBtn').onclick=async()=>{
+    if(!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt=null; };
+  window.addEventListener('appinstalled',()=>{ document.getElementById('installBtn').textContent='已安装'; });
+  window.addEventListener('online',  ()=>{ document.getElementById('offline').style.display='none'; refresh(); });
+  window.addEventListener('offline', ()=>{ document.getElementById('offline').style.display='block'; });
+  document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+  document.getElementById('q').addEventListener('input',debounce(onSearch,350));
+  refresh();
+}
+function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
+function switchTab(name){
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('active',s.id==='tab-'+name));
+  if(name==='portfolio') loadPortfolios(); if(name==='market') loadMarket(); if(name==='settings') loadSettingsInfo();
+}
+function setDate(meta){ if(meta&&meta.data_date) document.getElementById('dateline').textContent='数据日期 '+meta.data_date+(meta.data_source==='postgresql'?' · PG':' · SQLite'); }
+
+async function refresh(){
+  const p=Promise.allSettled([loadMarket(),loadPortfolios()]);
+  if(!navigator.onLine) return; document.getElementById('offline').style.display='none';
+  await p;
+}
+function spin(on){ document.getElementById('loader').style.display=on?'block':'none'; }
+
+/* ── 大盘 ── */
+async function loadMarket(){
+  const box=document.getElementById('indexCards');
+  box.innerHTML=''; box.appendChild(el('div','card','加载指数…'));
+  try{
+    const results=await Promise.allSettled(INDEXES.map(async ([code,name])=>{
+      const j=await api('/index/daily/'+code+'?page_size=1');
+      const rec=(j.data.records||[])[0];
+      setDate(j.meta);
+      return {name:j.data.name||name,rec};
+    }));
+    box.innerHTML='';
+    results.forEach((r,idx)=>{
+      const label=(r.value&&r.value.name)||INDEXES[idx][1];
+      if(r.status!=='fulfilled'||!r.value||!r.value.rec){ box.appendChild(el('div','card','<h3>'+label+'</h3><div class="warn">'+(r.reason?r.reason.message:'无数据')+'</div>')); return; }
+      const {name,rec}=r.value, c=cls(rec.pct_chg);
+      const d=el('div','card');
+      d.innerHTML=`<h3>${name}</h3>
+        <div class="big ${c}">${fmt(rec.close)}</div>
+        <div class="${c}" style="font-size:13px;margin-top:3px">${rec.pct_chg>0?'+':''}${fmt(rec.pct_chg)}%</div>
+        <div style="font-size:11px;color:var(--dim);margin-top:3px">${rec.trade_date||''}</div>`;
+      box.appendChild(d);
+    });
+    loadMoneyflow();
+  }catch(e){ box.innerHTML=''; box.appendChild(el('div','card','<div class="warn">指数加载失败: '+e.message+'</div>')); }
+}
+async function loadMoneyflow(){
+  try{
+    const dates=await api('/equity/trade_dates'); const d=(dates.data.trade_dates||[])[0];
+    if(!d) return;
+    const j=await api('/moneyflow/market_summary/'+d);
+    const s=j.data||{};
+    const box=document.getElementById('moneyflowBox');
+    box.innerHTML=`<span class="l">净流入</span><span class="r ${s.net_mf_amount>=0?'up':'down'}">${(s.net_mf_amount/10000).toFixed(1)} 亿</span>`;
+  }catch(e){ document.getElementById('moneyflowBox').innerHTML='<span class="l">资金数据暂不可用</span>'; }
+}
+
+/* ── 个股 ── */
+let searchTimer=0;
+async function onSearch(){
+  const q=document.getElementById('q').value.trim(); const box=document.getElementById('searchResults');
+  if(!q){ box.innerHTML=''; return; }
+  box.innerHTML='<div class="row"><span class="l">搜索中…</span></div>';
+  try{
+    const j=await api('/stocks/search?q='+encodeURIComponent(q));
+    const list=j.data?.records||j.data||[];
+    if(!list.length){ box.innerHTML='<div class="row"><span class="l">无匹配</span></div>'; return; }
+    box.innerHTML='';
+    list.slice(0,8).forEach(s=>{
+      const r=el('div','row','');
+      r.innerHTML=`<span class="l">${s.name}<span class="tag flat">${s.ts_code}</span></span>`;
+      r.style.cursor='pointer'; r.onclick=()=>showStock(s.ts_code);
+      box.appendChild(r);
+    });
+  }catch(e){ box.innerHTML='<div class="row"><span class="l warn">搜索失败: '+e.message+'</span></div>'; }
+}
+async function showStock(code){
+  const d=document.getElementById('stockDetail');
+  d.innerHTML='<div class="card"><h3>加载个股…</h3></div>';
+  try{
+    const [basic, bars, dbj] = await Promise.all([
+      api('/stocks/'+code),
+      api('/equity/daily/'+code+'?page_size=60'),
+      api('/equity/daily_basic?ts_code='+code+'&page_size=1').catch(() => null),
+    ]);
+    const info=basic.data||{};
+    const recs=bars.data.records||[];
+    const cur=recs[0]||{};
+    const db=(recordsOf(dbj||{})||[])[0]||{};
+    const c=cls(cur.pct_chg);
+    d.innerHTML=`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:15px;font-weight:600">${info.name}<span class="tag flat">${code}</span></span>
+        <span style="font-size:11px;color:var(--dim)">${info.industry||''}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:10px">
+        <span class="big ${c}">${fmt(cur.close)}</span>
+        <span class="${c}" style="font-size:14px">${cur.pct_chg>0?'+':''}${fmt(cur.pct_chg)}%</span>
+      </div>
+      <canvas id="kline"></canvas>
+      <div style="font-size:11px;color:var(--dim);display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+        <span>成交额 ${fmt((cur.amount||0)/100000,1)} 亿</span>
+        <span>换手 ${fmt(db.turnover_rate)}%</span>
+        <span>PE ${fmt(db.pe_ttm,1)}</span>
+        <span>PB ${fmt(db.pb,2)}</span>
+        <span>市值 ${fmt((db.total_mv||0)/10000,0)} 亿</span>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="loadFund('${code}')">财务摘要</button>
+        <button class="btn" onclick="loadPhi('${code}')">证伪测试</button>
+      </div>
+      <div id="subDetail"></div>
+    </div>`;
+    await paintLine('kline',recs.map(x=>x.close),recs.map(x=>cls(x.pct_chg)));
+  }catch(e){ d.innerHTML='<div class="card"><div class="warn">加载失败: '+e.message+'</div></div>'; }
+}
+async function loadFund(code){
+  try{
+    const j=await api('/fundamental/summary/'+code); const s=j.data||{};
+    document.getElementById('subDetail').innerHTML=`<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:12px;line-height:2">
+      营收 ${fmt(s.revenue_yoy)}% · 净利 ${fmt(s.profit_yoy)}% · ROE ${fmt(s.roe)}%<br>
+      毛利率 ${fmt(s.gross_margin)}% · 净利率 ${fmt(s.net_margin)}%
+    </div>`;
+  }catch(e){ document.getElementById('subDetail').innerHTML='<div class="warn">财务摘要不可用</div>'; }
+}
+async function loadPhi(code){
+  try{
+    const j=await api('/philosophy/falsification/'+code); const s=j.data||{};
+    document.getElementById('subDetail').innerHTML=`<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:12px;line-height:2">
+      证伪结论: <b>${s.signal||'—'}</b> · 置信度 ${s.confidence||'—'}<br>${(s.summary||s.detail||'')}
+    </div>`;
+  }catch(e){ document.getElementById('subDetail').innerHTML='<div class="warn">证伪测试不可用</div>'; }
+}
+async function paintLine(id,vals,dirs){
+  const cv=document.getElementById(id); if(!cv||!vals.length) return;
+  const ctx=cv.getContext('2d'); const W=cv.clientWidth, H=cv.clientHeight;
+  cv.width=W*dpr(); cv.height=H*dpr(); ctx.setTransform(dpr(),0,0,dpr(),0,0);
+  ctx.clearRect(0,0,W,H);
+  const mn=Math.min(...vals), mx=Math.max(...vals), rg=(mx-mn)||1;
+  const X=i=>i/(vals.length-1)*W, Y=v=>H-6-(v-mn)/rg*(H-12);
+  ctx.beginPath(); vals.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));
+  ctx.strokeStyle='#00d4aa'; ctx.lineWidth=1.6; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(X(0),Y(vals[0]));
+  const last=cls(vals[vals.length-1]-vals[0]);
+  ctx.strokeStyle = last===UP?'#f85149':last===DOWN?'#3fb950':'#8b949e'; ctx.lineWidth=1.6;
+  vals.forEach((v,i)=>ctx.lineTo(X(i),Y(v))); ctx.stroke();
+}
+function dpr(){ return window.devicePixelRatio||1; }
+
+/* ── 组合 ── */
+async function loadPortfolios(){
+  const box=document.getElementById('portfolioList');
+  try{
+    const j=await api('/portfolio'); const list=j.data.portfolios||[];
+    setDate(j.meta);
+    box.innerHTML='';
+    if(!list.length){ box.innerHTML='<div class="card"><h3>组合</h3><div class="warn">暂无组合</div></div>'; return; }
+    list.forEach(p=>{
+      const r=el('div','card','');
+      r.innerHTML=`<h3>${p.name}</h3><div style="font-size:11px;color:var(--dim)">创建 ${(p.created_at||'').slice(0,8)}</div>`;
+      r.style.cursor='pointer'; r.onclick=()=>showPortfolio(p.id);
+      box.appendChild(r);
+    });
+  }catch(e){ box.innerHTML='<div class="card"><div class="warn">组合不可用: '+e.message+'</div></div>'; }
+}
+async function showPortfolio(pid){
+  const d=document.getElementById('portfolioDetail');
+  d.innerHTML='<div class="card"><h3>加载组合…</h3></div>';
+  try{
+    const [dj, nj]=await Promise.all([api('/portfolio/'+pid), api('/portfolio/'+pid+'/nav?start_date='+past30())]);
+    const info=dj.data||{}; const nav=nj.data||{};
+    const holds=info.holdings||[]; const pts=nav.points||[];
+    const statsDiv=document.createElement('div');
+    console.log(nj);
+    d.innerHTML=`<div class="card">
+      <h3>${info.portfolio?.name||'组合 '+pid}</h3>
+      <canvas id="cnav"></canvas>
+      <div id="chips" style="margin-top:6px"></div>
+      ${holds.map(h=>`<div class="row"><span class="l">${h.name||h.ts_code}</span><span class="r">${fmt(h.weight_pct,1)}% ${h.industry||''}</span></div>`).join('')}
+    </div>`;
+    await paintLine('cnav',pts.map(p=>p.nav),null);
+    statsDiv.id='chips';
+    try{
+      const sj=await api('/portfolio/'+pid+'/stats?start_date='+past30());
+      const st=sj.data?.stats||{};
+      document.getElementById('chips').innerHTML=[
+        ['区间收益',st.total_return_pct+'%'],['年化',st.annual_return_pct+'%'],
+        ['夏普',st.sharpe],['回撤',st.max_drawdown_pct+'%'],
+        ['超额',(st.excess_return_pct!=null?st.excess_return_pct+'%':'—')]
+      ].map(([k,v])=>`<span class="chip">${k} <b>${v}</b></span>`).join('');
+    }catch(e){}
+  }catch(e){ d.innerHTML='<div class="card"><div class="warn">组合加载失败: '+e.message+'</div></div>'; }
+}
+function past30(){ const d=new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10).replace(/-/g,''); }
+
+/* ── 设置 ── */
+async function loadSettingsInfo(){
+  try{
+    const j=await api('/index/daily/000001.SH?page_size=1');
+    setDate(j.meta);
+    document.getElementById('ver').textContent='2.0.0';
+    document.getElementById('src').textContent=j.meta.data_source==='postgresql'?'PostgreSQL 主库':'SQLite';
+    document.getElementById('comp').textContent=j.meta.completeness;
+    document.getElementById('apiStatus').textContent='在线 ✓'; document.getElementById('apiStatus').style.color='var(--green)';
+  }catch(e){
+    document.getElementById('apiStatus').textContent='不可达 ✗'; document.getElementById('apiStatus').style.color='var(--red)';
+  }
+}
+boot();
+</script>
+</body>
+</html>

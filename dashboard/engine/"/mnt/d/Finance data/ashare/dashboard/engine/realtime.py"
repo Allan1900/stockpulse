@@ -1,0 +1,330 @@
+"""
+实时行情引擎 — 混合架构: 交易时段走实时API, 非交易时段走PG
+
+数据源:
+  - A股个股实时: 新浪直连 HTTP (毫秒级)
+  - A股全市场快照: 腾讯 stock_zh_a_spot_tx (~6s, 27字段)
+  - A股个股分时: 腾讯 stock_zh_a_minute
+  - 港股个股实时: 新浪直连 HTTP
+  - 港股全市场快照: 新浪 stock_hk_spot (~30s, 2800只)
+  - 美股个股实时: 新浪直连 HTTP (毫秒级)
+  - 美股日线历史: AKShare stock_us_daily
+  - 港股日线历史: AKShare stock_hk_daily
+  - 外汇实时: 新浪直连 HTTP
+  - 全球指数: 新浪 stock_hk_index_spot_sina
+  - 盘后/周末: PostgreSQL
+"""
+import warnings; warnings.filterwarnings("ignore")
+import pandas as pd
+import numpy as np
+from datetime import datetime, time
+import requests as _req
+import re
+
+# ════════════════════════════════════════════════════════════════
+# 交易时段判断
+# ════════════════════════════════════════════════════════════════
+
+TRADING_START = time(9, 30)
+TRADING_END = time(15, 0)
+
+def is_trading_time(dt: datetime = None) -> bool:
+    dt = dt or datetime.now()
+    if dt.weekday() >= 5: return False
+    t = dt.time()
+    return TRADING_START <= t < TRADING_END
+
+def is_market_open_today() -> bool:
+    from engine.query import sql_one
+    today_str = datetime.now().strftime("%Y%m%d")
+    r = sql_one(None, "SELECT 1 FROM trade_cal WHERE cal_date=%s AND is_open=1", [today_str])
+    return r is not None
+
+# ════════════════════════════════════════════════════════════════
+# 工具函数
+# ════════════════════════════════════════════════════════════════
+
+SINA_HEADERS = {"Referer": "https://finance.sina.com.cn",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+def _tscode_to_sina_symbol(ts_code: str) -> str:
+    code = ts_code.upper(); base = code.replace(".SZ","").replace(".SH","").strip()
+    if code.endswith(".SZ"): return "sz" + base.lower()
+    if code.endswith(".SH"): return "sh" + base.lower()
+    return ("sh" if base.startswith(("6","9")) else "sz") + base.lower()
+
+def _hk_code_to_sina(ts_code: str) -> str:
+    return "hk" + ts_code.upper().replace(".HK","").strip()
+
+# ════════════════════════════════════════════════════════════════
+# A股 — 个股实时 (新浪直连, 毫秒级)
+# ════════════════════════════════════════════════════════════════
+
+def get_realtime_quote(ts_code: str) -> dict:
+    symbol = _tscode_to_sina_symbol(ts_code)
+    url = f"https://hq.sinajs.cn/list={symbol}"
+    try:
+        resp = _req.get(url, headers=SINA_HEADERS, timeout=8)
+        resp.encoding = "gbk"; text = resp.text.strip()
+    except Exception as e:
+        return {"error": f"网络请求失败: {e}", "source": "sina_realtime"}
+    m = re.search(r'"([^"]+)"', text)
+    if not m: return {"error": "无法解析", "source": "sina_realtime"}
+    fields = m.group(1).split(",")
+    if len(fields) < 8: return {"error": f"字段不足", "source": "sina_realtime"}
+    def _f(i, d=0.0):
+        try: return float(fields[i]) if fields[i].strip() else d
+        except: return d
+    name = fields[0]; open_p=_f(1); yest_close=_f(2); price=_f(3)
+    high=_f(4); low=_f(5); bid=_f(6); ask=_f(7)
+    volume=_f(8,0); amount=_f(9,0)
+    pct_chg = ((price-yest_close)/yest_close*100) if yest_close else 0
+    ds = fields[30] if len(fields)>30 else ""; ts = fields[31] if len(fields)>31 else ""
+    return {"ts_code":ts_code,"name":name,"open":round(open_p,2),
+        "yest_close":round(yest_close,2),"price":round(price,2),
+        "high":round(high,2),"low":round(low,2),
+        "volume":int(volume),"amount":round(amount,2),
+        "bid":round(bid,2),"ask":round(ask,2),
+        "pct_chg":round(pct_chg,2),"change":round(price-yest_close,2),
+        "datetime":f"{ds} {ts}".strip(),"source":"sina_realtime"}
+
+# ════════════════════════════════════════════════════════════════
+# A股 — 全市场快照 (腾讯 ~6s, 27字段)
+# ════════════════════════════════════════════════════════════════
+
+def get_market_snapshot() -> pd.DataFrame:
+    import akshare as ak
+    try:
+        df = ak.stock_zh_a_spot_tx()
+        if df is not None and not df.empty:
+            df["ts_code"] = df["code"].apply(
+                lambda x: x[2:]+".SH" if x.startswith("sh") else x[2:]+".SZ")
+        return df
+    except Exception as e:
+        try: return ak.stock_zh_a_spot()
+        except: return pd.DataFrame({"error":[f"快照失败:{e}"]})
+
+# ════════════════════════════════════════════════════════════════
+# A股 — 个股分时数据
+# ════════════════════════════════════════════════════════════════
+
+def get_intraday_minutes(ts_code: str, period: str = "1") -> pd.DataFrame:
+    import akshare as ak
+    symbol = ts_code.replace(".SZ","sz").replace(".SH","sh").lower()
+    try: return ak.stock_zh_a_minute(symbol=symbol, period=period, adjust="")
+    except Exception as e: return pd.DataFrame({"error":[f"分时失败:{e}"]})
+
+# ════════════════════════════════════════════════════════════════
+# 港股 — 实时行情
+# ════════════════════════════════════════════════════════════════
+
+def get_hk_realtime_quote(ts_code: str) -> dict:
+    symbol = _hk_code_to_sina(ts_code)
+    url = f"https://hq.sinajs.cn/list={symbol}"
+    try:
+        resp = _req.get(url, headers=SINA_HEADERS, timeout=8)
+        resp.encoding = "gbk"; text = resp.text.strip()
+    except Exception as e:
+        return {"error": f"港股网络失败: {e}", "source": "hk_realtime"}
+    m = re.search(r'"([^"]+)"', text)
+    if not m: return {"error": "无法解析港股", "source": "hk_realtime"}
+    fields = m.group(1).split(",")
+    if len(fields) < 6: return {"error": "港股字段不足", "source": "hk_realtime"}
+    def _f(i, d=0.0):
+        try: return float(fields[i]) if fields[i].strip() else d
+        except: return d
+    name=fields[1]; open_p=_f(2); yest_close=_f(3); high=_f(4); low=_f(5)
+    price=_f(6); change_v=_f(7); pct_chg=_f(8)
+    volume=int(_f(9,0)); amount=_f(11,0); bid=_f(13,0); ask=_f(14,0)
+    ds=fields[17] if len(fields)>17 else ""; ts=fields[18] if len(fields)>18 else ""
+    return {"ts_code":ts_code,"name":name,"open":round(open_p,2),
+        "yest_close":round(yest_close,2),"price":round(price,2),
+        "high":round(high,2),"low":round(low,2),
+        "volume":int(volume),"amount":round(amount,2),
+        "bid":round(bid,2),"ask":round(ask,2),
+        "pct_chg":round(pct_chg,2),"change":round(change_v,2),
+        "datetime":f"{ds} {ts}".strip(),"source":"hk_realtime"}
+
+def get_hk_market_snapshot() -> pd.DataFrame:
+    import akshare as ak
+    try:
+        df = ak.stock_hk_spot()
+        if df is not None and not df.empty:
+            df["ts_code"] = df["代码"].apply(lambda x: str(x).zfill(5)+".HK")
+            df["最新价"] = pd.to_numeric(df.get("最新价",0), errors="coerce")
+            df["涨跌幅"] = pd.to_numeric(df.get("涨跌幅",0), errors="coerce")
+        return df
+    except Exception as e:
+        return pd.DataFrame({"error":[f"港股快照失败:{e}"]})
+
+# ════════════════════════════════════════════════════════════════
+# 美股 — 实时行情 (新浪直连)
+# ════════════════════════════════════════════════════════════════
+
+def _us_symbol_to_sina(symbol: str) -> str:
+    return "gb_" + symbol.lower()
+
+def get_us_realtime_quote(symbol: str) -> dict:
+    sina_code = _us_symbol_to_sina(symbol)
+    url = f"https://hq.sinajs.cn/list={sina_code}"
+    try:
+        resp = _req.get(url, headers=SINA_HEADERS, timeout=8)
+        resp.encoding = "gbk"; text = resp.text.strip()
+    except Exception as e:
+        return {"error": f"美股网络失败: {e}", "source": "us_realtime"}
+    m = re.search(r'"([^"]+)"', text)
+    if not m: return {"error": "无法解析美股", "source": "us_realtime"}
+    fields = m.group(1).split(",")
+    if len(fields) < 20: return {"error": "美股字段不足", "source": "us_realtime"}
+    def _f(i, d=0.0):
+        try: return float(fields[i]) if fields[i].strip() else d
+        except: return d
+    return {"symbol":symbol,"name":fields[0],"price":_f(1),
+        "pct_chg":_f(2),"change":_f(4),"open":_f(5),
+        "high":_f(6),"low":_f(7),"pre_close":_f(11),
+        "volume":int(_f(12,0)),"datetime":fields[3] if len(fields)>3 else "",
+        "source":"us_realtime"}
+
+# ════════════════════════════════════════════════════════════════
+# 美股 — 日线历史 (AKShare)
+# ════════════════════════════════════════════════════════════════
+
+def get_us_daily(symbol: str, days: int = 100) -> pd.DataFrame:
+    import akshare as ak
+    try:
+        df = ak.stock_us_daily(symbol=symbol, adjust="")
+        if df is not None and not df.empty:
+            df = df.sort_values("date", ascending=False).head(days)
+            df["symbol"] = symbol
+        return df
+    except Exception as e:
+        return pd.DataFrame({"error":[f"美股日线失败:{e}"]})
+
+# ════════════════════════════════════════════════════════════════
+# 港股 — 日线历史 (AKShare)
+# ════════════════════════════════════════════════════════════════
+
+def get_hk_daily(ts_code: str, days: int = 200, adjust: str = "qfq") -> pd.DataFrame:
+    import akshare as ak
+    symbol = ts_code.upper().replace(".HK","").strip()
+    try:
+        df = ak.stock_hk_daily(symbol=symbol, adjust=adjust)
+        if df is not None and not df.empty:
+            df = df.sort_values("date", ascending=False).head(days)
+        return df
+    except Exception as e:
+        return pd.DataFrame({"error":[f"港股日线失败:{e}"]})
+
+# ════════════════════════════════════════════════════════════════
+# 外汇 — 实时汇率 (新浪直连)
+# ════════════════════════════════════════════════════════════════
+
+def get_forex_realtime(pair: str = "usdcny") -> dict:
+    url = f"https://hq.sinajs.cn/list=fx_{pair.lower()}"
+    try:
+        resp = _req.get(url, headers=SINA_HEADERS, timeout=8)
+        resp.encoding = "gbk"; text = resp.text.strip()
+    except Exception as e:
+        return {"error": f"汇率网络失败: {e}"}
+    m = re.search(r'"([^"]+)"', text)
+    if not m: return {"error": "无法解析汇率"}
+    fields = m.group(1).split(",")
+    if len(fields) < 8: return {"error": "字段不足"}
+    def _f(i, d=0.0):
+        try: return float(fields[i]) if fields[i].strip() else d
+        except: return d
+    return {"pair":pair.upper(),"price":_f(1),
+        "bid":_f(8,0) if len(fields)>8 else 0,
+        "ask":_f(9,0) if len(fields)>9 else 0,"source":"forex_realtime"}
+
+# ════════════════════════════════════════════════════════════════
+# 全球指数 — 新浪港股指数
+# ════════════════════════════════════════════════════════════════
+
+def get_global_index_snapshot() -> pd.DataFrame:
+    import akshare as ak
+    try:
+        df = ak.stock_hk_index_spot_sina()
+        if df is not None and not df.empty:
+            df.columns = [c.replace(" ","") for c in df.columns]
+        return df
+    except Exception as e:
+        return pd.DataFrame({"error":[f"全球指数失败:{e}"]})
+
+# ════════════════════════════════════════════════════════════════
+# PG 盘后查询
+# ════════════════════════════════════════════════════════════════
+
+def get_pg_quote(ts_code: str) -> dict:
+    from engine.query import sql_one
+    row = sql_one(None,
+        "SELECT trade_date, close, pct_chg, high, low, vol, amount, open, pre_close "
+        "FROM daily WHERE ts_code=%s ORDER BY trade_date DESC LIMIT 1", [ts_code])
+    if not row: return {"error":f"PG无数据:{ts_code}","source":"pg"}
+    nr = sql_one(None, "SELECT name FROM stock_basic WHERE ts_code=%s", [ts_code])
+    return {"ts_code":ts_code,"name":nr["name"] if nr else "","trade_date":row["trade_date"],
+        "price":float(row["close"]),"pct_chg":float(row["pct_chg"]),
+        "high":float(row["high"]),"low":float(row["low"]),
+        "volume":int(row["vol"]) if row["vol"] else 0,
+        "amount":float(row["amount"]) if row["amount"] else 0,
+        "open":float(row["open"]) if row["open"] else 0,
+        "yest_close":float(row["pre_close"]) if row["pre_close"] else 0,"source":"pg"}
+
+# ════════════════════════════════════════════════════════════════
+# 混合路由
+# ════════════════════════════════════════════════════════════════
+
+def hybrid_quote(ts_code: str, force_pg: bool = False) -> dict:
+    if not force_pg and is_trading_time():
+        result = get_realtime_quote(ts_code)
+        if "error" not in result: return result
+        fb = get_pg_quote(ts_code)
+        fb["fallback_reason"] = result.get("error"); return fb
+    return get_pg_quote(ts_code)
+
+def hybrid_market_snapshot() -> pd.DataFrame:
+    if is_trading_time():
+        snap = get_market_snapshot()
+        if snap is not None and not snap.empty and "error" not in snap.columns: return snap
+    from engine.query import sql as _sql
+    df = _sql(None, """SELECT d.ts_code, s.name, d.close, d.pct_chg, d.vol, d.amount,
+        d.high, d.low, d.open, b.pe_ttm, b.pb, b.total_mv,
+        b.circ_mv, b.turnover_rate FROM daily d
+        JOIN stock_basic s ON d.ts_code = s.ts_code
+        LEFT JOIN daily_basic b ON d.ts_code = b.ts_code AND d.trade_date = b.trade_date
+        WHERE d.trade_date = (SELECT MAX(trade_date) FROM daily)
+        ORDER BY d.amount DESC""")
+    if df is not None and not df.empty: df["source"] = "pg"
+    return df
+
+# ════════════════════════════════════════════════════════════════
+# 市场概览 (4大指数)
+# ════════════════════════════════════════════════════════════════
+
+def get_market_overview() -> dict:
+    indices = {"000001.SH":"上证指数","399001.SZ":"深证成指",
+               "399006.SZ":"创业板指","000688.SH":"科创50"}
+    if is_trading_time():
+        rows = []
+        for code, name in indices.items():
+            q = get_realtime_quote(code)
+            if "error" not in q:
+                rows.append({"指数":q.get("name",name),"最新价":q.get("price",0),
+                    "涨跌幅":q.get("pct_chg",0),"涨跌额":q.get("change",0),
+                    "今开":q.get("open",0),"最高":q.get("high",0),
+                    "最低":q.get("low",0),
+                    "成交额(亿)":round(q.get("amount",0)/1e8,2) if q.get("amount") else 0})
+        return {"data":pd.DataFrame(rows),"source":"realtime"}
+    from engine.query import sql as _sql
+    df = _sql(None, """SELECT ts_code, trade_date, close, pct_chg, open, high, low, amount
+        FROM index_daily WHERE ts_code = ANY(%s)
+        AND trade_date = (SELECT MAX(trade_date) FROM index_daily)""",
+        params=[list(indices.keys())])
+    if df is not None and not df.empty:
+        df["指数"]=df["ts_code"].map(indices); df["最新价"]=df["close"]
+        df["涨跌幅"]=df["pct_chg"]; df["今开"]=df["open"]
+        df["最高"]=df["high"]; df["最低"]=df["low"]
+        df["成交额(亿)"]=(df["amount"]/1e8).round(2)
+        df = df[["指数","最新价","涨跌幅","今开","最高","最低","成交额(亿)"]]
+        return {"data":df,"source":"pg"}
+    return {"data":pd.DataFrame(),"source":"pg"}

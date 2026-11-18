@@ -1,0 +1,31 @@
+# StockPulse 配置样例
+# 搜索顺序：./config.yaml → ~/.ashare/config.yaml → /etc/ashare/config.yaml
+# 环境变量优先于本文件；数据目录建议用 SP_DATA_DIR 指定。
+
+# 数据目录（SQLite 降级库、导出文件）
+db_dir: "~/ashare_data"
+
+api:
+  tushare_token: ""          # 或设置 TUSHARE_TOKEN 环境变量
+  api_delay: 0.3             # 上游调用间隔（秒）
+
+dates:
+  default_start: "20150101"
+  # default_end: "today"
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8501
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+export:
+  default_format: "csv"      # csv / xlsx / parquet
+
+# PostgreSQL（行情主库）；留空则降级 SQLite
+postgres:
+  host: "localhost"          # 对应 PGHOST
+  dbname: "ashare"           # PGDATABASE
+  user: ""                   # PGUSER，留空取当前系统用户

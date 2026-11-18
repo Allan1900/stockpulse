@@ -1,196 +1,253 @@
-# 🫀 StockPulse
+# 🫀 StockPulse · 市场脉搏
 
-**让 AI Agent 做 A 股分析——不仅仅是查数据。**  
-AI Agent-native A-share financial analysis engine.
+**给 AI Agent 一个可以直接调用的 A 股市场。**
+
+A-share data & analytics platform for AI agents — REST API · MCP Server · analysis engines · self-hosted dashboard.
 
 ```bash
-pip install stockpulse
-stockpulse query "宁德时代最近5个交易日行情"
-stockpulse report 宁德时代
-stockpulse dashboard
+git clone https://github.com/Allan1900/stockpulse.git && cd stockpulse
+pip install -e ".[api,mcp]"
+export TUSHARE_TOKEN=your_token
+stockpulse-server          # → http://localhost:8000/docs
+```
+
+> **v2.0（2026-11）**：从「Agent SDK」升级为「平台」——**70 个标准化端点 + 30 个 MCP 工具 + 5 个分析引擎 + 统一数据血缘**。
+> 0.x 的 SDK/CLI 仍保留在 `src/stockpulse/`，v2 的平台能力在 `src/ashare/`。
+
+---
+
+## 它解决什么问题
+
+AI Agent 做 A 股分析，卡在三件事上：**数据散、口径乱、结论不可验证**。
+
+| 问题 | StockPulse 的做法 |
+|---|---|
+| 数据散在数据源、交易所、财经网站、宏观库 | 统一入库（PostgreSQL 主库 + SQLite 降级），一套 schema、一套查询 |
+| 不知道数据是哪天的、全不全 | 每个响应带 `meta`：`data_date` / `data_source` / `completeness`，按表探测真实最新日期 |
+| 分析结论不可复现 | 诊股/信号/纪律全部输出**置信度**与**因子归因**，支持回测与证伪 |
+
+---
+
+## 架构
+
+```
+┌─ REST API (FastAPI :8000) ──────────────────────────────┐
+│  /sp-api/v2/*          70 个标准化端点（统一响应 + 血缘 meta）│
+│  /sp-api/v2/agent.json Agent 集成协议（能力自描述）          │
+│  /sp-api/system/health 9 库健康监控（PG/SQLite 分库明细）    │
+│  /api/v1/*             v1 兼容端点                        │
+│  /docs                 OpenAPI 交互文档                    │
+├─ MCP Server (stdio / SSE) ──────────────────────────────┤
+│  30 Tools — Claude Code / Cursor / Codex / 任意 MCP 客户端  │
+├─ 分析引擎 ───────────────────────────────────────────────┤
+│  diagnosis 深度诊股 · signal 信号与回测 · regime 大市开关     │
+│  discipline 五层交易纪律 · philosophy 证伪/反身性 · portfolio │
+├─ 数据层 ─────────────────────────────────────────────────┤
+│  PostgreSQL 主库（行情/财务/资金/龙虎榜/股东/指数）           │
+│  SQLite 降级（国内宏观 cn_* / 全球宏观 FRED + World Bank）    │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 📋 完整能力矩阵
+## 能力矩阵
 
-### 一、数据查询（9 类）
+| 组 | 端点前缀 | 内容 |
+|---|---|---|
+| 股票与行情 | `/stocks` `/equity` | 股票列表/搜索、日/周/月线、每日指标、交易日历 |
+| 财务 | `/fundamental` | 利润表/资产负债表/现金流量表/财务指标/摘要 |
+| 资金流 | `/moneyflow` | 个股资金流、每日排行、全市场汇总 |
+| 龙虎榜 | `/lhb` | 每日上榜明细、个股统计、日期列表 |
+| 股东 | `/holders` | 十大股东、股东户数 |
+| 指数与行业 | `/index` `/industry` | 指数日线/成分、行业日涨跌、行业区间表现 |
+| 宏观 | `/macro` `/global_macro` | CPI/PPI/PMI/GDP/M2/LPR、FRED 序列、World Bank 指标 |
+| 实时 | `/realtime` | A 股/港股/美股报价、全球指数、外汇、市场快照 |
+| 组合 | `/portfolio` | 建仓/持仓/交易、NAV、绩效归因、止损位 |
+| 诊股与信号 | `/diagnosis` `/signal` | 四维度深度评分、涨跌概率、量价背离、信号回测 |
+| 交易纪律 | `/market/regime` `/discipline` | 大市开关（MA200/MA60）、五层风险计划 |
+| 哲学层 | `/philosophy` | Popper 证伪检查、Soros 反身性阶段 |
+| 筛选与研报 | `/screen` `/reports` | 多维选股、研报目录/正文/PDF |
+| 客户自助 | `/self` | 订阅分层、交付记录 |
+| 系统 | `/system/health` `/agent.json` | 健康检查、Agent 协议描述 |
 
-| 类别 | CLI 示例 | 说明 |
-|------|----------|------|
-| 📈 日线行情 | `stockpulse query "宁德时代行情"` | 5529只股票，2015~至今，800万+行 |
-| 💰 资金流向 | `stockpulse query "贵州茅台资金流向"` | 主力/散户/超大单净流入，890万+行 |
-| 📊 财务指标 | `stockpulse query "比亚迪财务数据"` | EPS/ROE/营收/资本公积，22万+行 |
-| 🏭 行业排行 | `stockpulse query "今日行业涨跌排行"` | 78个行业实时计算 |
-| 🇭🇰 北向资金 | `stockpulse query "北向资金最近10天"` | ⭐ 沪深股通每日汇总 |
-| 📋 龙虎榜 | `stockpulse query "龙虎榜 20260724"` | ⭐ 每日上榜明细，16万+行 |
-| 🌐 宏观数据 | `stockpulse query "最新CPI数据"` | ⭐ CPI/PPI/PMI/GDP/M2/Shibor/LPR，20年 |
-| 🔍 股票搜索 | `stockpulse query "搜索新能源汽车"` | 名称/代码模糊搜索 |
-| 🎯 智能选股 | `stockpulse query "筛选PE<20"` | PE/PB/ROE/行业多维筛选 |
+> 以上全部挂在 `/sp-api/v2` 下，完整清单见 `/docs` 或 `GET /sp-api/v2/agent.json`。
 
-### 二、技术指标（6 大类，46 个）
-
-```
-趋势类 (12)   → MA5/10/20/60/120/250, EMA12/26/50, WMA, ADX, SAR, 金叉/死叉
-动量类 (13)   → MACD, RSI6/12/24, KDJ, Williams%R, CCI, ROC, MFI, UltOsc, Aroon, BOP
-量能类 (5)    → OBV, Chaikin A/D, A/D Osc
-波动类 (3)    → ATR, BOLL, 布林带
-形态识别 (8)   → Doji, Hammer, 吞没, 晨星, 黄昏星, 三白兵, 三乌鸦
-信号检测 (3)   → 金叉, 死叉, RSI超买超卖
-```
-
-| 指标 | CLI | MCP 工具 | 说明 |
-|------|-----|----------|------|
-| 移动平均线 | `stockpulse indicator ma 300750.SZ` | `get_ma` | 6周期 |
-| MACD | `stockpulse indicator macd 300750.SZ` | `get_macd` | DIF/DEA/柱 |
-| RSI | `stockpulse indicator rsi 300750.SZ` | `get_rsi` | 6/12/24 |
-| KDJ | `stockpulse indicator kdj 300750.SZ` | `get_kdj` | K/D/J |
-| 布林带 | `stockpulse indicator boll 300750.SZ` | `get_boll` | 上/中/下轨 |
-| 金叉/死叉 | — | `get_golden_cross` / `get_death_cross` | MA5/MA10信号 |
-| RSI信号 | — | `get_rsi_signal` | 超买>80 / 超卖<20 |
-
-### 三、AI 分析报告（⭐ 核心差异）
-
-| 命令 | 说明 |
-|------|------|
-| `stockpulse report 宁德时代` | 完整分析报告 |
-| `stockpulse report 300750.SZ --save` | 保存为 .md 文件 |
-
-报告包含 **6 大模块 + 综合研判**：
+**MCP Tools（30 个）**
 
 ```
-📈 近期走势        → 趋势 + 位置分位
-💰 资金流向分析    → 个股资金 + 北向资金
-📊 财务健康        → EPS/ROE/ROA/同比
-🔬 技术指标综合分析 → MA/MACD/RSI/KDJ/ADX/布林/ATR/量能/形态
-🎯 综合研判        → 7多:2空 → 强烈看多 (HIGH置信度)
-```
-
-### 四、市场总览（新增）
-
-| 工具 | 返回 |
-|------|------|
-| `get_market_overview` | 上证/深证/创业板/科创50 实时行情 |
-| `get_sector_rotation` | 多周期行业涨跌幅聚合 |
-| `get_stock_radar` | 估值/质量/动量/资金 四维评分 |
-
-### 五、API 服务
-
-**OpenAI 兼容协议**
-
-```bash
-stockpulse serve
-# → http://localhost:8900
-# → POST /v1/chat/completions (自然语言查询)
-# → GET /v1/models
-# → GET /health
-```
-
-**MCP 协议（Claude Code / Cursor）**
-
-```bash
-stockpulse mcp
-# → http://localhost:8901/mcp/v1
-# → GET /mcp/v1/tools/list (18 个工具)
-# → POST /mcp/v1/tools/call
-```
-
-**Web Dashboard（Streamlit）**
-
-```bash
-stockpulse dashboard
-# → http://localhost:8501
-# 4 Tab: 智能查询 / 分析报告 / 技术指标 / 行业全景
-```
-
-### 六、快速开始
-
-```bash
-# 安装
-pip install stockpulse
-
-# 配置数据库
-export STOCKPULSE_PG_URI="postgresql://user@host/db?options=-c%20search_path=ashare,public"
-
-# 使用 CLI
-stockpulse query "宁德时代最近5个交易日行情"
-stockpulse query "贵州茅台资金流向"
-stockpulse query "北向资金最近10天"
-stockpulse indicator macd 300750.SZ
-stockpulse report 宁德时代
-
-# 启动服务
-stockpulse serve      # API :8900
-stockpulse mcp        # MCP :8901
-stockpulse dashboard  # Web :8501
-```
-
-### 七、Docker
-
-```bash
-# 一键启动（API + PostgreSQL）
-docker compose up -d
-
-# 仅 API（外部 PG）
-docker run -p 8900:8900 \
-  -e STOCKPULSE_PG_URI="postgresql://user@host/db?options=-c%20search_path=ashare,public" \
-  ghcr.io/Allan1900/stockpulse:latest
-```
-
-### 八、数据架构
-
-```
-数据来源: PostgreSQL (ashare schema)
-更新频率: 每日收盘后自动更新
-数据量:   3400万+ 行
-覆盖:     2015~至今，5529只A股
-```
-
-| 表 | 行数 | 说明 |
-|----|------|------|
-| `daily` | 800万+ | 日线行情（分区表） |
-| `daily_basic` | 1143万+ | 每日指标（PE/PB/市值） |
-| `moneyflow` | 892万+ | 资金流向 |
-| `fina_indicator` | 22万+ | 财务指标 |
-| `hsgt_top10` | 5700+ | 北向资金十大活跃股 |
-| `top_list` | 16万+ | 龙虎榜 |
-| `stock_basic` | 5529 | 股票基本信息 |
-| `trade_cal` | 4383+ | 交易日历 |
-
-### 九、项目结构
-
-```
-stockpulse/
-├── src/stockpulse/
-│   ├── __init__.py      # 入口 + StockPulse 类
-│   ├── engine.py        # 查询引擎（9数据 + 3市场工具）
-│   ├── indicators.py    # 46技术指标（6大类）
-│   ├── report.py        # AI分析报告（6模块+综合研判）
-│   ├── server.py        # OpenAI兼容API
-│   ├── mcp_server.py    # MCP协议服务器（18工具）
-│   ├── cli.py           # CLI（9命令）
-│   ├── dashboard.py     # Streamlit Web Dashboard（4Tab）
-│   ├── auth.py          # API Key鉴权
-│   ├── config.py        # 配置系统
-│   └── utils.py         # 工具函数
-├── Dockerfile           # 多阶段构建
-├── docker-compose.yml   # 一键启动
-├── docs/                # GitHub Pages
-├── plans/               # 设计文档
-└── pyproject.toml
-
-GitHub: https://github.com/Allan1900/stockpulse
-Pages:  https://Allan1900.github.io/stockpulse/
-MCP.so: https://mcp.so (搜索 stockpulse)
+行情   search_stocks · get_daily · get_realtime · get_fundamentals
+资金   get_moneyflow · get_moneyflow_rank · get_lhb · get_macro
+行业   get_industry_performance · get_industry_daily_performance · screen_stocks
+分析   deep_diagnosis · quick_diagnosis · get_signal_analysis · get_probability
+       get_divergence · backtest_signal · get_market_regime · get_trading_plan
+哲学   get_falsification · get_reflexivity_stage
+组合   get_portfolios · get_portfolio_detail · portfolio_performance
+研报   get_reports · get_report
+客户   get_self_status · get_self_deliveries
+告警   check_alerts · get_alert_config
 ```
 
 ---
 
+## 快速开始
+
+### 1. 环境
+
+- Python 3.10+
+- PostgreSQL 14+（推荐；没有 PG 时降级到 SQLite，功能有裁剪）
+
+### 2. 安装
+
+```bash
+git clone https://github.com/Allan1900/stockpulse.git
+cd stockpulse
+python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+pip install -e ".[api,mcp]"                          # 面板另加 dashboard
+```
+
+### 3. 配置
+
+```bash
+cp configs/config.yaml.example config.yaml
+```
+
+| 环境变量 | 说明 | 默认 |
+|---|---|---|
+| `TUSHARE_TOKEN` | Tushare Pro Token（拉取行情/财务） | 空 |
+| `SP_DATA_DIR` | 数据目录（SQLite 库、导出文件） | `~/ashare_data` |
+| `SP_DASHBOARD_DIR` | 面板目录 | 仓库内 `dashboard/` |
+| `SP_ENGINE_DIR` | 分析引擎目录 | `<dashboard>/engine` |
+| `PGHOST` `PGDATABASE` `PGUSER` | PostgreSQL 连接 | `localhost` / `ashare` / 当前用户 |
+
+PostgreSQL 首次建库：
+
+```bash
+createdb ashare
+psql -d ashare -c "CREATE SCHEMA IF NOT EXISTS ashare;"
+```
+
+### 4. 拉数据
+
+```bash
+ashare update all --start 20150101     # 全量（Tushare，初次较慢）
+ashare status                          # 各库行数与最新日期
+```
+
+> 仓库**不含任何行情数据**。数据需用你自己的 Tushare Pro 账号拉取，或把已有数据按 `ashare.db.schema` 建表导入。
+
+### 5. 起服务
+
+```bash
+stockpulse-server                      # REST API :8000 → /docs
+stockpulse-mcp                         # MCP stdio
+stockpulse-mcp --sse --port 8002       # MCP over SSE
+ashare dashboard                       # Streamlit 面板 :8501（需 [dashboard]）
+```
+
+---
+
+## API 示例
+
+```bash
+# 个股日线（带血缘 meta：data_date / data_source / completeness）
+curl "http://localhost:8000/sp-api/v2/equity/daily?ts_code=002714.SZ&limit=3"
+
+# 深度诊股：四维度评分 + 置信度 + 证伪/反身性
+curl "http://localhost:8000/sp-api/v2/diagnosis/deep/002714.SZ"
+
+# 大市开关（MA200 / MA60）
+curl "http://localhost:8000/sp-api/v2/market/regime?ts_code=000001.SH"
+
+# 交易纪律：五层风险计划（环境/标的/风险预算/退出/结论）
+curl "http://localhost:8000/sp-api/v2/discipline/plan/002714.SZ?total_capital=1000000"
+```
+
+响应统一为：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {},
+  "meta": {
+    "total": 1, "page": 1, "page_size": 20,
+    "data_date": "20261117", "data_source": "postgresql", "completeness": 1.0
+  }
+}
+```
+
+---
+
+## MCP 接入
+
+Claude Code / Cursor / Codex 的 MCP 配置：
+
+```json
+{
+  "mcpServers": {
+    "stockpulse": {
+      "command": "python",
+      "args": ["-m", "ashare.api.v2.mcp_server"],
+      "env": { "TUSHARE_TOKEN": "your_token", "PGDATABASE": "ashare" },
+      "timeout": 120
+    }
+  }
+}
+```
+
+接入后可以直接说：
+
+- 「查一下宁德时代最近 20 个交易日，算一下 MACD 和量价背离」
+- 「今天龙虎榜有哪些席位异动」
+- 「牧原现在能不能买——按陈江挺的五层纪律给我一份计划」
+- 「筛选 PE<15 且 ROE>20 的股票，按行业分组」
+
+---
+
+## 分析引擎
+
+| 引擎 | 端点 | 输出 |
+|---|---|---|
+| 深度诊股 | `/diagnosis/deep/{code}` | 财务/资金/技术/宏观四维评分 + 综合分 + 置信度 + 证伪否决 + 反身性阶段 |
+| 信号 | `/signal/analysis` `/probability` `/divergence` `/backtest` | 均线/MACD/RSI/KDJ/BOLL 信号、涨跌概率（因子归因）、量价背离、历史胜率回测 |
+| 大市开关 | `/market/regime` | 指数 MA200/MA60 → 可操作 / 观望 / 震荡 |
+| 交易纪律 | `/discipline/plan/{code}` | 五层检查：环境 → 标的 → 风险预算（单笔≤2%、单票≤20%）→ 退出 → 结论 |
+| 哲学层 | `/philosophy/*` | Popper 证伪清单、Soros 反身性阶段 |
+
+所有引擎输出**判断**而非投资建议；每条带置信度，数据覆盖不足时置信度自动降级。
+
+---
+
+## 项目结构
+
+```
+src/ashare/
+  api/        FastAPI v1 + v2（20 个路由模块）、静态 PWA、MCP Server
+  db/         schema / loader / query / status（数据入库与查询）
+  dashboard/  Streamlit 启动器
+  config.py   配置（YAML + 环境变量）
+  paths.py    路径解析（SP_DATA_DIR / SP_DASHBOARD_DIR）
+engine/       分析引擎：指标、回测、因子、宏观、告警、研报、每日更新
+dashboard/    Streamlit 面板 + engine/
+src/stockpulse/  0.x 时代的 SDK/CLI（保留兼容）
+docs/         文档
+```
+
+---
+
+## 💖 支持项目
+
+如果 StockPulse 对你有帮助，欢迎支持：
+
+[![爱发电](https://img.shields.io/badge/爱发电-赞助项目-blue?style=flat-square)](https://afdian.com/a/Allan1900)
+
+---
 
 ## ⚖️ 数据说明 & 合规声明
 
-StockPulse 的所有数据均来自 **公开API采集**，不涉及任何个人隐私数据或非公开数据。
-本工具仅用于学术研究和数据分析目的，不构成投资建议。
+- 数据来自**公开接口**（Tushare Pro 等），不含任何个人隐私数据或非公开信息；使用时需遵守数据源的服务条款。
+- 本项目是**分析工具**，不构成投资建议。所有评分、概率、计划均为模型输出，请自行判断并承担风险。
+- 不做投资顾问资质相关的任何声称；如需对外提供服务，请自行确认当地监管要求。
 
 ## 📜 许可证
 

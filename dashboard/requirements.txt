@@ -1,0 +1,6 @@
+# A股交叉分析平台 — 依赖
+streamlit>=1.28
+plotly>=5.15
+pandas>=2.0
+numpy>=1.24
+psycopg2-binary>=2.9

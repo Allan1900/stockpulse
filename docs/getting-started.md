@@ -1,59 +1,78 @@
 # 快速开始
 
-## 安装
+## 1. 环境
+
+- Python 3.10+
+- PostgreSQL 14+（推荐）。没有 PG 时自动降级到 SQLite，宏观以外的部分能力会裁剪。
+
+## 2. 安装（从源码）
 
 ```bash
-pip install stockpulse
+git clone https://github.com/Allan1900/stockpulse.git
+cd stockpulse
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[api,mcp]"                         # 面板另加 dashboard
 ```
 
-## 配置
+> 没有发布到 PyPI，请勿使用 `pip install stockpulse`。
 
-### 方式一：环境变量（推荐）
+## 3. 配置
 
 ```bash
-# PG 数据库连接（默认使用本地 socket，无需密码）
-export ASHARE_AGENT_PG_URI="postgresql://user@host/db?options=-c%20search_path=ashare,public"
-
-# 服务器配置（可选）
-export ASHARE_AGENT_HOST="localhost"
-export ASHARE_AGENT_PORT=8900
+cp configs/config.yaml.example config.yaml
 ```
 
-### 方式二：配置文件
-
-创建 `~/.stockpulse/config.yaml`：
-
-```yaml
-pg_uri: "postgresql://zrall@localhost/ashare?options=-c%20search_path=ashare,public"
-host: "localhost"
-port: 8900
-log_level: "info"
-```
-
-## 启动 API 服务器
+| 变量 | 说明 | 默认 |
+|---|---|---|
+| `TUSHARE_TOKEN` | Tushare Pro Token | 空 |
+| `SP_DATA_DIR` | 数据目录（SQLite、导出） | `~/ashare_data` |
+| `SP_DASHBOARD_DIR` | 面板目录 | 仓库 `dashboard/` |
+| `SP_ENGINE_DIR` | 引擎目录 | `<dashboard>/engine` |
+| `PGHOST`/`PGDATABASE`/`PGUSER` | PG 连接 | `localhost`/`ashare`/当前用户 |
 
 ```bash
-stockpulse serve
+createdb ashare
+psql -d ashare -c "CREATE SCHEMA IF NOT EXISTS ashare;"
 ```
 
-访问 http://localhost:8900/docs 查看自动生成的 API 文档。
-
-## 启动 MCP 服务器（用于 Claude Code / Cursor）
+## 4. 拉数据
 
 ```bash
-stockpulse mcp
+ashare update all --start 20150101
+ashare status
 ```
 
-MCP 服务器运行在 `http://localhost:8901`。
-
-## 测试
+初次全量较慢（取决于 Tushare 积分与限频）；之后增量：
 
 ```bash
-# 查询行情
-curl http://localhost:8900/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"宁德时代最近5个交易日行情"}]}'
-
-# 通过 CLI 查询
-stockpulse query "宁德时代最近5个交易日行情"
+ashare update daily          # 日线
+ashare update financial      # 财务
+ashare update moneyflow      # 资金流
 ```
+
+## 5. 起服务
+
+```bash
+stockpulse-server                 # API :8000
+stockpulse-server --port 8080     # 换端口（等价于 run_server(port=)）
+stockpulse-mcp                    # MCP stdio
+stockpulse-mcp --sse --port 8002  # MCP SSE
+ashare dashboard                  # 面板 :8501
+```
+
+## 6. 自检
+
+```bash
+curl http://localhost:8000/sp-api/system/health
+curl "http://localhost:8000/sp-api/v2/equity/daily?ts_code=002714.SZ&limit=1"
+curl "http://localhost:8000/sp-api/v2/market/regime?ts_code=000001.SH"
+```
+
+三条都能返回 `"code": 0` 且 `meta.data_date` 是最新交易日，说明链路通了。
+
+## 常见问题
+
+- **`/health` 404**：健康端点只有 `/sp-api/system/health`。
+- **PG 连接不上**：确认 `createdb ashare` 已执行、`PGUSER` 有权限；程序不会自动建库。
+- **数据全是空**：`ashare status` 看行数；行情数据必须自己拉，仓库不带。
+- **面板起不来**：`pip install -e ".[dashboard]"`，并且 `SP_DASHBOARD_DIR` 指向仓库 `dashboard/`。

@@ -1,70 +1,31 @@
----
-layout: default
----
+# StockPulse · 市场脉搏
 
-# 🫀 StockPulse
+给 AI Agent 一个可以直接调用的 A 股市场：**REST API + MCP Server + 分析引擎 + 自托管面板**。
 
-**让 AI Agent 做 A 股分析——不仅仅是查数据。**
+- [快速开始](getting-started.md) — 从源码安装、配库、拉数据、起服务
+- [API 参考](api-reference.md) — 70 个 v2 端点、统一响应、血缘 meta
+- [MCP 接入](mcp-integration.md) — Claude Code / Cursor / Codex 配置与 30 个工具
+- [Agent 示例](agent-examples.md) — 自然语言 → 工具调用 → 结构化回答
 
-北向资金 / 龙虎榜 / 宏观数据 / 行情 / 财务 — OpenAI 兼容 API + MCP 协议 + CLI。
-
-```bash
-pip install stockpulse
-stockpulse query "宁德时代最近5个交易日行情"
-```
-
----
-
-## 快速上手
-
-### CLI
+## 30 秒了解
 
 ```bash
-stockpulse query "宁德时代最近5个交易日行情"
-stockpulse query "贵州茅台资金流向"
-stockpulse query "今日行业涨跌排行"
-stockpulse query "北向资金最近5天"
-stockpulse query "比亚迪财务数据"
+git clone https://github.com/Allan1900/stockpulse.git && cd stockpulse
+pip install -e ".[api,mcp]"
+export TUSHARE_TOKEN=your_token && ashare update all --start 20150101
+stockpulse-server     # http://localhost:8000/docs
+stockpulse-mcp        # MCP stdio，给 Claude Code 用
 ```
 
-### API 服务器（OpenAI 兼容）
+## 三个设计原则
 
-```bash
-stockpulse serve
-# → http://localhost:8900
-# → /v1/chat/completions
-```
+1. **每个数字都能溯源**：响应 `meta` 带 `data_date` / `data_source` / `completeness`，按表探测而不是拿全库最新日期糊弄。
+2. **判断带置信度**：诊股、概率、交易计划都输出置信度与因子归因，数据缺失时自动降级，不假装确定。
+3. **可证伪**：`/philosophy/falsification` 给出证伪条件，`/signal/backtest` 让规则可样本外检验。
 
-### MCP 服务器（Claude Code / Cursor）
+## 版本
 
-```bash
-stockpulse mcp
-# → http://localhost:8901/mcp/v1
-```
+- **v2.0**（2026-11）：平台化——70 端点 / 30 MCP 工具 / 五大引擎 / PG+SQLite 双后端
+- v1.0（2026-07）：Agent SDK/CLI 形态，保留在 `src/stockpulse/`
 
----
-
-## 文档
-
-| 链接 | 说明 |
-|------|------|
-| [📖 快速开始](getting-started.md) | 安装 & 配置 |
-| [📚 API 参考](api-reference.md) | 所有端点 |
-| [🔗 MCP 集成](mcp-integration.md) | Claude Code / Cursor 配置 |
-| [🤖 Agent 示例](agent-examples.md) | 使用场景 |
-| [📝 介绍文章](blog/introduction.md) | 《让 Claude Code 直接查 A 股数据》 |
-| [🐙 GitHub](https://github.com/Allan1900/stockpulse) | 源代码 |
-
----
-
-## 数据覆盖
-
-| 分类 | 覆盖范围 | 行数 |
-|------|---------|------|
-| 📈 日线行情 | 5529 只股票，2015~至今 | 800万+ |
-| 💰 资金流向 | 主力/散户净流入 | 890万+ |
-| 📊 财务指标 | EPS/ROE/营收/资本公积 | 22万+ |
-| 🏭 行业排行 | 78 个行业实时涨跌 | — |
-| 🇭🇰 **北向资金** | 沪深股通每日汇总 | ✅ 覆盖 |
-| 📋 **龙虎榜** | 每日上榜明细 | ✅ 覆盖 |
-| 🌐 **宏观数据** | CPI/PPI/PMI/GDP/M2/Shibor/LPR | ✅ 覆盖 |
+> 数据来自公开接口，需自备 Tushare Pro Token；仓库不含行情数据。本项目是分析工具，不构成投资建议。
