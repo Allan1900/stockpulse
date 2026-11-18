@@ -2,11 +2,15 @@ __pycache__
 *.pyc
 *.egg-info
 .git
-.gitignore
-*.md
 docs/
 plans/
 agentskills/
 tests/
 tmp/
 .DS_Store
+data/
+exports/
+*.db
+*.log
+config.yaml
+.env
